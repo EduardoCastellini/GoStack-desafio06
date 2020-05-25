@@ -4,6 +4,8 @@ import fs from 'fs';
 import Transaction from '../models/Transaction';
 import Category from '../models/Category';
 
+import TransactionsRepository from '../repositories/TransactionsRepository';
+
 interface CSVTransaction {
   title: string;
   type: 'income' | 'outcome';
@@ -14,6 +16,7 @@ interface CSVTransaction {
 class ImportTransactionsService {
   async execute(filePath: string): Promise<Transaction[]> {
     const categoriesRepositories = getRepository(Category);
+    const transactionRepository = getCustomRepository(TransactionsRepository);
 
     const contactsReadStream = fs.createReadStream(filePath);
 
@@ -45,7 +48,38 @@ class ImportTransactionsService {
       },
     });
 
-    console.log(existCategories);
+    const existCategoriesTitles = existCategories.map(
+      (category: Category) => category.title,
+    );
+
+    const addCategoryTitles = categories
+      .filter(category => !existCategoriesTitles.includes(category))
+      .filter((value, index, self) => self.indexOf(value) === index);
+
+    const newCategories = categoriesRepositories.create(
+      addCategoryTitles.map(title => ({ title })),
+    );
+
+    await categoriesRepositories.save(newCategories);
+
+    const finalCategories = [...newCategories, ...existCategories];
+
+    const createTransactions = transactionRepository.create(
+      transactions.map(transaction => ({
+        title: transaction.title,
+        type: transaction.type,
+        value: transaction.value,
+        category: finalCategories.find(
+          category => category.title === transaction.category,
+        ),
+      })),
+    );
+
+    await transactionRepository.save(createTransactions);
+
+    await fs.promises.unlink(filePath);
+
+    return createTransactions;
   }
 }
 
